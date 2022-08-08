@@ -143,6 +143,22 @@ namespace Graphics
             yield return axis;
         }
 
+        public static IAuto<Arrow> TurnDirection(this FaceTurn turn, CubieFace face)
+        {
+            var rotation = turn.Axis.Rotate();
+
+            return new Auto<Arrow>(
+                morphF: arrow =>
+                {
+                    if (face.Cubie.Dot(turn.Axis) > 0)
+                    {
+                        return rotation.Morph(arrow);
+                    }
+
+                    return arrow;
+                });
+        }
+
         public static IAuto<CubieFace> Turn(this FaceTurn turn)
         {
             var rotation = turn.Axis.Rotate();

@@ -1,17 +1,25 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 using SharpDX;
 using SharpDX.D3DCompiler;
+using SharpDX.Direct2D1;
 using SharpDX.Direct3D;
 using SharpDX.Direct3D11;
 using SharpDX.DXGI;
 using SharpDX.Windows;
+using SharpDX.WIC;
+using AlphaMode = SharpDX.Direct2D1.AlphaMode;
 using Buffer = SharpDX.Direct3D11.Buffer;
+using Color = SharpDX.Color;
 using Device = SharpDX.Direct3D11.Device;
+using Factory = SharpDX.DXGI.Factory;
+using InputElement = SharpDX.Direct3D11.InputElement;
+using PixelFormat = SharpDX.Direct2D1.PixelFormat;
 
 namespace Graphics
 {
@@ -60,12 +68,15 @@ namespace Graphics
             SwapChain swapChain;
             Device.CreateWithSwapChain(DriverType.Hardware, DeviceCreationFlags.None, desc, out device, out swapChain);
             var context = device.ImmediateContext;
-
+            
             // Ignore all windows events
             var factory = swapChain.GetParent<Factory>();
             factory.MakeWindowAssociation(form.Handle, WindowAssociationFlags.IgnoreAll);
+            
+            //new BitmapDecoder(new ImagingFactory(), new DataStream(),  )
+            //new BitmapDecoder(new ImagingFactory(), )
+            //var bitmap = SharpDX.Direct2D1.Bitmap1.FromWicBitmap(device, new FormatConverter());
 
-            // Compile Vertex and Pixel shaders
             var vertexShaderByteCode = ShaderBytecode.CompileFromFile("MiniCube.fx", "VS", "vs_4_0");
             var vertexShader = new VertexShader(device, vertexShaderByteCode);
 
@@ -81,9 +92,11 @@ namespace Graphics
                     });
 
             var rubiksCube = RubikAlgebra.InitialCube;
+            var chosenFace = new CubieFace(new Arrow(Sign.Negative, Sign.Negative, Sign.Negative), new Arrow(Sign.Zero, Sign.Zero, Sign.Negative));
+            var chosenDirection = new Arrow(Sign.Positive, Sign.Zero, Sign.Zero);
 
             // Instantiate Vertex buiffer from vertex data
-            var vertexIns = rubiksCube.EnumerateRubix().ToArray();
+            var vertexIns = rubiksCube.EnumerateRubix(chosenFace, chosenDirection).ToArray();
 
             var vertices = Buffer.Create(device, BindFlags.VertexBuffer, vertexIns);
 
@@ -97,7 +110,7 @@ namespace Graphics
             context.VertexShader.SetConstantBuffer(0, contantBuffer);
             context.VertexShader.Set(vertexShader);
             context.PixelShader.Set(pixelShader);
-
+            
             // Prepare matrices
             var view = Matrix.LookAtLH(new Vector3(0, 0, -5), new Vector3(0, 0, 0), Vector3.UnitY);
             Matrix proj = Matrix.Identity;
@@ -119,9 +132,28 @@ namespace Graphics
             // Setup handler on resize form
             form.UserResized += (sender, args) => userResized = true;
 
+            form.MouseUp += (sender, args) =>
+            {
+                var side = args.Button == MouseButtons.Right ? 1U : args.Button == MouseButtons.Left ? 3U : 0U;
+                var newDirection = chosenFace.ReOrient(chosenDirection, side);
+
+                chosenDirection = newDirection;
+                userTurn = new Arrow();
+            };
+
             // Setup full screen mode change F5 (Full) F4 (Window)
             form.KeyDown += (sender, args) =>
             {
+                if (args.KeyCode == Keys.Space)
+                {
+                    var newFace = chosenFace.Neighbour(chosenDirection);
+                    var newDirection = chosenFace.ReOrient(chosenDirection);
+
+                    chosenFace = newFace;
+                    chosenDirection = newDirection;
+                    userTurn = new Arrow();
+                }
+
                 var rotate = args.KeyCode.DetectUserRotation();
 
                 if (userRotate.Dot(rotate) <= 0)
@@ -204,9 +236,11 @@ namespace Graphics
 
                 if (userTurn != null)
                 {
-                    rubiksCube = new FaceTurn(userTurn.Value).TurnCube().Morph(rubiksCube);
+                    chosenDirection = userTurn.Value.Magnitude() == 0 ? chosenDirection : new FaceTurn(userTurn.Value).TurnDirection(chosenFace).Power(3).Morph(chosenDirection);
+                    chosenFace = userTurn.Value.Magnitude() == 0 ? chosenFace : new FaceTurn(userTurn.Value).Turn().Power(3).Morph(chosenFace);
+                    rubiksCube = userTurn.Value.Magnitude() == 0 ? rubiksCube : new FaceTurn(userTurn.Value).TurnCube().Morph(rubiksCube);
 
-                    vertexIns = rubiksCube.EnumerateRubix().ToArray();
+                    vertexIns = rubiksCube.EnumerateRubix(chosenFace, chosenDirection).ToArray();
 
                     context.UpdateSubresource(vertexIns, vertices);
 
@@ -294,8 +328,10 @@ namespace Graphics
             }
         }
 
-        private static IEnumerable<Vector4> EnumerateRubix(this IRubik cube)
+        private static IEnumerable<Vector4> EnumerateRubix(this IRubik cube, CubieFace chosenFace, Arrow direction)
         {
+            var next = chosenFace.Neighbour(direction);
+
             foreach (var arrow in Arrows())
             {
                 var offset = new Vector4((int)arrow.X * 3.0f, (int)arrow.Y * 3.0f, (int)arrow.Z * 3.0f, 0.0f);
@@ -307,10 +343,29 @@ namespace Graphics
                         {
                             var color = cube[new CubieFace(arrow, face)];
 
-                            return color.AsColor();
+                            var selected = arrow.Equals(chosenFace.Cubie) && face.Equals(chosenFace.Face);
+                            var isNext = arrow.Equals(next.Cubie) && face.Equals(next.Face);
+
+                            return color.AsColor() / (selected ? 4 : isNext ? 2 : 1);
                         }
 
-                        return new Vector4();
+                        if (arrow.Equals(chosenFace.Cubie))
+                        {
+                            //if (face.Equals(direction))
+                            {
+                                return new Vector4(0.75f, 0.75f, 0.75f, 1.0f);
+                            }
+                        }
+
+                        if (arrow.Equals(next.Cubie))
+                        {
+                            //if (face.Equals(direction))
+                            {
+                                return new Vector4(0.75f, 0.75f, 0.75f, 1.0f) / 3;
+                            }
+                        }
+
+                        return new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
                     });
 
                 foreach (var vertexIn in cubieVertices)
@@ -348,7 +403,7 @@ namespace Graphics
 
                     return new Vector4(1.0f, 1.0f, 0.0f, 1.0f);
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(color), color, null);
+                    throw new ArgumentOutOfRangeException("color", color, null);
             }
         }
 

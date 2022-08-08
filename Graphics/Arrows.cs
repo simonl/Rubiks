@@ -43,7 +43,7 @@ namespace Graphics
                     case Axis.Z:
                         return this.Z;
                     default:
-                        throw new ArgumentOutOfRangeException(nameof(axis), axis, null);
+                        throw new ArgumentOutOfRangeException("axis", axis, null);
                 }
             }
         }
@@ -62,7 +62,7 @@ namespace Graphics
                 case Axis.Z:
                     return new Arrow(Sign.Zero, Sign.Zero, Sign.Positive);
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(axis), axis, null);
+                    throw new ArgumentOutOfRangeException("axis", axis, null);
             }
         }
 
